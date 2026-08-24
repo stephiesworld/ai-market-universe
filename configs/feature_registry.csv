@@ -1,0 +1,14 @@
+name,family,economic_rationale,raw_source,formula,lookback,publication_lag,normalization
+momentum_20d,price,Recent relative demand may persist,total-return prices,P_t/P_t-20-1,20 trading days,market close,none
+momentum_60d,price,Medium-term trend can proxy changing expectations,total-return prices,P_t/P_t-60-1,60 trading days,market close,none
+excess_momentum_20d,price,Separates company movement from the broad market,total-return prices,stock momentum minus SPY momentum,20 trading days,market close,none
+realized_volatility_20d,risk,Higher uncertainty changes forecast dispersion,total-return prices,std(daily returns)*sqrt(252),20 trading days,market close,none
+drawdown_60d,risk,Recent stress may contain reversal or deterioration information,total-return prices,P_t/max(P_t-59..P_t)-1,60 trading days,market close,none
+consensus_eps,expectations,Point-in-time analyst expectations define the earnings comparison base,point-in-time consensus feed,latest consensus EPS vintage,latest forecast period,vendor timestamp,none
+consensus_revenue,expectations,Point-in-time analyst expectations define the revenue comparison base,point-in-time consensus feed,latest consensus revenue vintage,latest forecast period,vendor timestamp,none
+eps_surprise,earnings,Unexpected earnings can trigger delayed repricing,point-in-time earnings feed,(actual-consensus)/abs(consensus),latest reported event,vendor timestamp,sector rank later
+revenue_surprise,earnings,Unexpected revenue can confirm breadth of fundamental surprise,point-in-time earnings feed,(actual-consensus)/abs(consensus),latest reported event,vendor timestamp,sector rank later
+earnings_day_abnormal_return,earnings,Muted reaction to a large surprise may indicate underreaction,total-return prices,stock event return minus benchmark event return,announcement window,market close,none
+abnormal_volume,earnings,Volume measures information intensity,price-volume feed,event volume / trailing median volume,20 trading days,market close,none
+estimate_revision_30d,expectations,Changing estimates proxy a changing consensus,point-in-time consensus feed,current consensus / prior consensus - 1,30 calendar days,vendor timestamp,sector rank later
+forward_pe,valuation,Valuation approximates expectations embedded in price,point-in-time fundamentals feed,price / forward EPS,latest available filing/consensus,vendor timestamp,sector percentile later

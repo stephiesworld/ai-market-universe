@@ -1,0 +1,6 @@
+ticker,sector,sector_benchmark,selection_rule,valid_from,valid_to
+AAPL,Information Technology,XLK,fixed_five_stock_smoke_universe,2024-01-01,
+MSFT,Information Technology,XLK,fixed_five_stock_smoke_universe,2024-01-01,
+JPM,Financials,XLF,fixed_five_stock_smoke_universe,2024-01-01,
+XOM,Energy,XLE,fixed_five_stock_smoke_universe,2024-01-01,
+JNJ,Health Care,XLV,fixed_five_stock_smoke_universe,2024-01-01,
