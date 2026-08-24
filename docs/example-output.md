@@ -26,7 +26,7 @@ The deterministic fixture currently yields 90 held-out observations:
 | --- | ---: | ---: | ---: | ---: |
 | Zero excess | 4.89% | 42.22% | Undefined | Undefined |
 | 60-day momentum | 7.27% | 54.44% | 0.126 | 0.95% |
-| Ridge | 5.12% | 55.56% | -0.167 | -2.53% |
+| Ridge | 5.20% | 51.11% | -0.176 | -4.97% |
 
 Undefined ranking metrics for the zero baseline are intentional: identical predictions cannot create a meaningful ordering.
 
