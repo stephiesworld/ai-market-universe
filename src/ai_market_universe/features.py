@@ -60,8 +60,12 @@ def build_price_features(
         history = _price_at_or_before(data, ticker, cutoff)
         returns = history["adjusted_close"].pct_change().dropna()
         current = float(history["adjusted_close"].iloc[-1])
-        rolling_high = float(history["adjusted_close"].tail(60).max())
+        window_60 = history["adjusted_close"].tail(60)
         momentum_20 = trailing_return(history, 20)
+        realized_vol = (
+            float(returns.tail(20).std(ddof=1) * np.sqrt(252)) if len(returns) >= 20 else np.nan
+        )
+        drawdown = float(current / float(window_60.max()) - 1) if len(window_60) >= 60 else np.nan
         rows.append(
             {
                 "ticker": ticker,
@@ -70,8 +74,8 @@ def build_price_features(
                 "momentum_20d": momentum_20,
                 "momentum_60d": trailing_return(history, 60),
                 "excess_momentum_20d": momentum_20 - benchmark_20,
-                "realized_volatility_20d": float(returns.tail(20).std(ddof=1) * np.sqrt(252)),
-                "drawdown_60d": current / rolling_high - 1,
+                "realized_volatility_20d": realized_vol,
+                "drawdown_60d": drawdown,
                 "available_at": history["timestamp"].iloc[-1],
             }
         )

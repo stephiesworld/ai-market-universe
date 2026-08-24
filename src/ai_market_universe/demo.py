@@ -82,9 +82,11 @@ def run_demo(output_dir: str | Path) -> dict[str, object]:
     validation_end = unique_dates[int(len(unique_dates) * 0.80)]
     train, validation, test = temporal_split(frame, train_end, validation_end)
 
+    # Fit on train only. Validation labels realize after the test window starts,
+    # so train+val would leak held-out outcomes into the ridge coefficients.
     ridge = RidgeRegressor(alpha=20.0).fit(
-        pd.concat([train, validation], ignore_index=True),
-        pd.concat([train, validation], ignore_index=True)["realized_excess_return_90d"],
+        train,
+        train["realized_excess_return_90d"],
         FEATURE_COLUMNS,
     )
     models = [ZeroExcessBaseline(), MomentumBaseline(), ridge]
@@ -136,7 +138,7 @@ def run_demo(output_dir: str | Path) -> dict[str, object]:
                 ticker=row.ticker,
                 prediction_timestamp=pd.Timestamp(latest_timestamp).to_pydatetime(),
                 price_day_0=float(row.price_day_0),
-                spy_day_0=100.0,
+                spy_day_0=float(row.benchmark_day_0),
                 predicted_return_90d=score,
                 predicted_excess_return_90d=score,
                 prob_outperform_spy=probability,
