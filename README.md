@@ -58,6 +58,8 @@ The demo creates a research frame, model predictions, metrics, an append-only fo
 
 See the [synthetic example output](docs/example-output.md) for a compact walkthrough of the generated artifacts and their interpretation.
 
+The [point-in-time data-source decision memo](docs/point-in-time-data-sources.md) compares the providers and defines the smallest real PEAD pilot to evaluate before integration or a major data purchase.
+
 ## Information clock
 
 Every non-price source record must retain:
