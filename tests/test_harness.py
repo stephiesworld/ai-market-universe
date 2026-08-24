@@ -5,12 +5,21 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 
+from ai_market_universe.demo import run_demo
 from ai_market_universe.evaluation import evaluate_predictions
-from ai_market_universe.features import complete_snapshot, missing_feature
+from ai_market_universe.features import (
+    build_price_features,
+    complete_snapshot,
+    missing_feature,
+    snapshot_from_price_feature_row,
+)
 from ai_market_universe.labels import generate_forward_labels
+from ai_market_universe.models import RidgeRegressor, temporal_split
 from ai_market_universe.pead import build_pead_event_features
 from ai_market_universe.point_in_time import PointInTimeError, assert_no_future_information
 from ai_market_universe.schemas import EvidenceTrack, FeatureSnapshot, FeatureValue, Forecast, Provenance
@@ -19,6 +28,17 @@ from ai_market_universe.universe import load_universe_as_of
 
 
 NOW = datetime(2025, 1, 3, 21, tzinfo=UTC)
+
+
+def _price_panel(closes: dict[str, list[float]], start: str = "2025-01-02") -> tuple[pd.DataFrame, pd.Timestamp]:
+    length = len(next(iter(closes.values())))
+    dates = pd.bdate_range(start, periods=length, tz="UTC")
+    rows = [
+        {"ticker": ticker, "timestamp": timestamp, "adjusted_close": float(price)}
+        for ticker, prices in closes.items()
+        for timestamp, price in zip(dates, prices)
+    ]
+    return pd.DataFrame(rows), dates[-1]
 
 
 def forecast() -> Forecast:
@@ -193,6 +213,101 @@ class HarnessTests(unittest.TestCase):
             )
             selected = load_universe_as_of(path, datetime(2023, 1, 1, tzinfo=UTC))
             self.assertEqual(selected["ticker"].tolist(), ["OLD"])
+
+    def test_short_history_leaves_drawdown_and_volatility_unavailable(self) -> None:
+        prices, cutoff = _price_panel(
+            {
+                "AAA": [100.0, 101.0, 99.0, 102.0, 103.0],
+                "SPY": [200.0, 201.0, 199.0, 202.0, 203.0],
+            }
+        )
+        result = build_price_features(prices, ["AAA"], cutoff)
+        self.assertTrue(pd.isna(result.loc[0, "drawdown_60d"]))
+        self.assertTrue(pd.isna(result.loc[0, "realized_volatility_20d"]))
+        snapshot = snapshot_from_price_feature_row(result.iloc[0])
+        for name in ("drawdown_60d", "realized_volatility_20d"):
+            feature = snapshot.features[name]
+            self.assertIsNone(feature.value)
+            self.assertFalse(feature.available)
+
+    def test_single_price_does_not_emit_zero_drawdown(self) -> None:
+        prices, cutoff = _price_panel({"AAA": [100.0], "SPY": [200.0]})
+        result = build_price_features(prices, ["AAA"], cutoff)
+        self.assertTrue(pd.isna(result.loc[0, "drawdown_60d"]))
+        self.assertFalse(result.loc[0, "drawdown_60d"] == 0.0)
+
+    def test_full_windows_emit_drawdown_and_volatility_including_valid_zero(self) -> None:
+        rising = [100.0 + day for day in range(60)]
+        spy = [200.0 + 0.1 * day for day in range(60)]
+        prices, cutoff = _price_panel({"AAA": rising, "SPY": spy})
+        result = build_price_features(prices, ["AAA"], cutoff)
+        self.assertAlmostEqual(result.loc[0, "drawdown_60d"], 0.0)
+        self.assertFalse(pd.isna(result.loc[0, "realized_volatility_20d"]))
+        snapshot = snapshot_from_price_feature_row(result.iloc[0])
+        drawdown = snapshot.features["drawdown_60d"]
+        self.assertEqual(drawdown.value, 0.0)
+        self.assertTrue(drawdown.available)
+
+    def test_volatility_requires_twenty_returns(self) -> None:
+        twenty_prices = [100.0 + day for day in range(20)]
+        prices, cutoff = _price_panel({"AAA": twenty_prices, "SPY": twenty_prices})
+        short = build_price_features(prices, ["AAA"], cutoff)
+        self.assertTrue(pd.isna(short.loc[0, "realized_volatility_20d"]))
+
+        twenty_one_prices = [100.0 + day for day in range(21)]
+        prices, cutoff = _price_panel({"AAA": twenty_one_prices, "SPY": twenty_one_prices})
+        complete = build_price_features(prices, ["AAA"], cutoff)
+        self.assertFalse(pd.isna(complete.loc[0, "realized_volatility_20d"]))
+        self.assertTrue(pd.isna(complete.loc[0, "drawdown_60d"]))
+
+    def test_drawdown_requires_sixty_prices(self) -> None:
+        fifty_nine = [100.0 + day for day in range(59)]
+        prices, cutoff = _price_panel({"AAA": fifty_nine, "SPY": fifty_nine})
+        short = build_price_features(prices, ["AAA"], cutoff)
+        self.assertTrue(pd.isna(short.loc[0, "drawdown_60d"]))
+
+    def test_demo_uses_train_only_ridge_and_point_in_time_spy_close(self) -> None:
+        fit_frames: list[pd.DataFrame] = []
+        original_fit = RidgeRegressor.fit
+
+        def capturing_fit(self, frame, target, columns):
+            fit_frames.append(frame.copy())
+            return original_fit(self, frame, target, columns)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(RidgeRegressor, "fit", capturing_fit):
+                report = run_demo(directory)
+            output = Path(directory)
+            frame = pd.read_csv(output / "demo_research_frame.csv")
+            train, validation, test = temporal_split(
+                frame,
+                report["split"]["train_end"],
+                report["split"]["validation_end"],
+            )
+            self.assertEqual(len(fit_frames), 1)
+            fit_timestamps = pd.to_datetime(fit_frames[0]["prediction_timestamp"], utc=True)
+            train_end = pd.Timestamp(report["split"]["train_end"])
+            self.assertEqual(len(fit_frames[0]), len(train))
+            self.assertLessEqual(fit_timestamps.max(), train_end)
+            self.assertFalse((fit_timestamps > train_end).any())
+
+            last_val = pd.to_datetime(validation["prediction_timestamp"], utc=True).max()
+            first_test = pd.to_datetime(test["prediction_timestamp"], utc=True).min()
+            self.assertGreater(last_val + pd.Timedelta(days=90), first_test)
+
+            store = ForecastStore(output / "demo_forecasts.sqlite3", EvidenceTrack.SYNTHETIC_FIXTURE)
+            latest_timestamp = pd.to_datetime(frame["prediction_timestamp"], utc=True).max()
+            latest = frame.loc[pd.to_datetime(frame["prediction_timestamp"], utc=True) == latest_timestamp]
+            spy_values: list[float] = []
+            for entry in store.manifest():
+                loaded = store.load(entry["cohort_id"], entry["ticker"])
+                expected = float(latest.loc[latest["ticker"] == entry["ticker"], "benchmark_day_0"].iloc[0])
+                self.assertAlmostEqual(loaded.spy_day_0, expected, places=6)
+                spy_values.append(loaded.spy_day_0)
+            self.assertTrue(spy_values)
+            self.assertTrue(np.allclose(spy_values, spy_values[0]))
+            self.assertAlmostEqual(spy_values[0], 131.69, places=1)
+            self.assertNotAlmostEqual(spy_values[0], 100.0, places=1)
 
 
 if __name__ == "__main__":
