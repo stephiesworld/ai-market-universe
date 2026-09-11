@@ -17,12 +17,24 @@ class MomentumBaseline:
     name = "momentum_60d_v1"
 
     def predict(self, frame: pd.DataFrame) -> np.ndarray:
-        values = frame["momentum_60d"].fillna(0.0).to_numpy(dtype=float)
-        return values - np.nanmean(values)
+        values = _require_observed_matrix(frame, ["momentum_60d"]).reshape(-1)
+        return values - values.mean()
 
 
 @dataclass
 class RidgeRegressor:
+    """Centered ridge on observed numeric features only.
+
+    Missingness contract:
+    - Fit and predict never median-fill or zero-fill a missing feature.
+    - NaN is unobserved. Companion ``{column}_available`` flags, when present,
+      mark a row unobserved even if a placeholder such as ``0.0`` was stored.
+    - An observed numeric zero remains valid when the value is non-null and
+      any companion available flag is true.
+    - Incomplete rows/features are refused; callers must drop them or omit
+      the unobserved column rather than treating absence as a signal.
+    """
+
     alpha: float = 10.0
     name: str = "ridge_v1"
 
@@ -34,9 +46,12 @@ class RidgeRegressor:
         self.intercept_: float | None = None
 
     def fit(self, frame: pd.DataFrame, target: pd.Series, columns: list[str]) -> "RidgeRegressor":
-        x = frame[columns].astype(float).copy()
-        x = x.fillna(x.median()).fillna(0.0).to_numpy()
+        x = _require_observed_matrix(frame, columns)
         y = target.to_numpy(dtype=float)
+        if len(y) != len(x):
+            raise ValueError("target length must match the feature frame")
+        if np.isnan(y).any():
+            raise ValueError("target values must be observed; missing labels are not imputed")
         self.columns_ = columns
         self.mean_ = x.mean(axis=0)
         self.scale_ = x.std(axis=0)
@@ -51,10 +66,33 @@ class RidgeRegressor:
     def predict(self, frame: pd.DataFrame) -> np.ndarray:
         if any(value is None for value in (self.columns_, self.mean_, self.scale_, self.coef_, self.intercept_)):
             raise RuntimeError("model must be fit before prediction")
-        x = frame[self.columns_].astype(float).copy()
-        x = x.fillna(pd.Series(self.mean_, index=self.columns_)).fillna(0.0).to_numpy()
+        x = _require_observed_matrix(frame, self.columns_)
         z = (x - self.mean_) / self.scale_
         return self.intercept_ + z @ self.coef_
+
+
+def _require_observed_matrix(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
+    missing_columns = [name for name in columns if name not in frame.columns]
+    if missing_columns:
+        raise ValueError(f"missing feature columns: {missing_columns}")
+    observed = pd.DataFrame(index=frame.index)
+    unobserved: list[str] = []
+    for name in columns:
+        numeric = pd.to_numeric(frame[name], errors="coerce")
+        available_name = f"{name}_available"
+        if available_name in frame.columns:
+            available = frame[available_name].fillna(False).astype(bool)
+            numeric = numeric.where(available)
+        if numeric.isna().any():
+            unobserved.append(name)
+        observed[name] = numeric
+    if unobserved:
+        raise ValueError(
+            "missing features are not imputed with median or zero; "
+            f"unobserved columns: {unobserved}. Pass only observed rows/features "
+            "or explicit available flags that remain false for absent consensus."
+        )
+    return observed.to_numpy(dtype=float)
 
 
 def temporal_split(
