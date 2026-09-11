@@ -34,6 +34,27 @@ BEFORE DELETE ON forecasts
 BEGIN
     SELECT RAISE(ABORT, 'forecasts are immutable');
 END;
+CREATE TRIGGER IF NOT EXISTS forecasts_evidence_track_lock
+BEFORE INSERT ON forecasts
+BEGIN
+    SELECT RAISE(ABORT, 'cannot mix evidence tracks in one store')
+    WHERE NEW.evidence_track IS NULL
+       OR NEW.evidence_track != (
+            SELECT value FROM store_metadata WHERE key = 'evidence_track'
+       );
+END;
+CREATE TRIGGER IF NOT EXISTS store_metadata_evidence_track_immutable
+BEFORE UPDATE ON store_metadata
+WHEN OLD.key = 'evidence_track' AND NEW.value IS NOT OLD.value
+BEGIN
+    SELECT RAISE(ABORT, 'evidence track metadata is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS store_metadata_evidence_track_no_delete
+BEFORE DELETE ON store_metadata
+WHEN OLD.key = 'evidence_track'
+BEGIN
+    SELECT RAISE(ABORT, 'evidence track metadata cannot be deleted');
+END;
 """
 
 
@@ -54,6 +75,14 @@ class ForecastStore:
             if stored != self.evidence_track.value:
                 raise ValueError(
                     f"store is locked to evidence track {stored}, not {self.evidence_track.value}"
+                )
+            mismatched = connection.execute(
+                "SELECT COUNT(*) FROM forecasts WHERE evidence_track != ?",
+                (self.evidence_track.value,),
+            ).fetchone()[0]
+            if mismatched:
+                raise ValueError(
+                    "store already contains forecasts on a different evidence track"
                 )
 
     def connect(self) -> sqlite3.Connection:
